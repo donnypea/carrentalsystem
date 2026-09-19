@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Book an Appointment | Samuel Tamsi</title>
+
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+    <!-- Navigation -->
+    <header class="navbar">
+        <div class="container nav-content">
+
+            <a href="index.html" class="logo">
+                S
+            </a>
+
+            <a href="index.html" class="nav-button">
+                Back to Home
+            </a>
+
+        </div>
+    </header>
+
+
+    <!-- Booking Section -->
+    <main>
+
+        <section class="booking-section">
+
+            <div class="container">
+
+                <div class="booking-header">
+
+                    <p class="section-label">
+                        APPOINTMENT
+                    </p>
+
+                    <h1>
+                        Book a Tour
+                    </h1>
+
+                    <p>
+                        Fill out the form below to request
+                        an appointment.
+                    </p>
+
+                </div>
+
+
+                <!-- Booking Form -->
+                <form id="bookingForm" class="booking-form">
+
+
+                    <!-- Customer Information -->
+                    <div class="form-section">
+
+                        <h2>Customer Information</h2>
+
+                        <div class="form-group">
+
+                            <label for="customerName">
+                                Full Name
+                            </label>
+
+                            <input
+                                type="text"
+                                id="customerName"
+                                name="customerName"
+                                placeholder="Enter your full name"
+                                required
+                            >
+
+                        </div>
+
+
+                        <div class="form-group">
+
+                            <label for="customerContact">
+                                Contact Number
+                            </label>
+
+                            <input
+                                type="tel"
+                                id="customerContact"
+                                name="customerContact"
+                                placeholder="09XX XXX XXXX"
+                                required
+                            >
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- Tour Information -->
+                    <div class="form-section">
+
+                        <h2>Tour Information</h2>
+
+
+                        <div class="form-group">
+
+                            <label for="service">
+                                Select Service
+                            </label>
+
+                            <select
+                                id="service"
+                                name="service"
+                                required
+                            >
+
+                                <option value="">
+                                    -- Select a service --
+                                </option>
+
+                                <option value="City Tour">
+                                    City Tour - ₱2,000
+                                </option>
+
+                                <option value="Island Tour">
+                                    Island Tour - ₱3,500
+                                </option>
+
+                                <option value="Airport Transfer">
+                                    Airport Transfer - ₱800
+                                </option>
+
+                            </select>
+
+                        </div>
+
+
+                        <div class="form-row">
+
+                            <div class="form-group">
+
+                                <label for="appointmentDate">
+                                    Date
+                                </label>
+
+                                <input
+                                    type="date"
+                                    id="appointmentDate"
+                                    name="appointmentDate"
+                                    required
+                                >
+
+                            </div>
+
+
+                            <div class="form-group">
+
+                                <label for="appointmentTime">
+                                    Preferred Time
+                                </label>
+
+                                <input
+                                    type="time"
+                                    id="appointmentTime"
+                                    name="appointmentTime"
+                                    required
+                                >
+
+                            </div>
+
+                        </div>
+
+
+                        <div class="form-group">
+
+                            <label for="guests">
+                                Number of Guests
+                            </label>
+
+                            <input
+                                type="number"
+                                id="guests"
+                                name="guests"
+                                min="1"
+                                max="20"
+                                value="1"
+                                required
+                            >
+
+                        </div>
+
+
+                        <div class="form-group">
+
+                            <label for="pickupLocation">
+                                Pickup Location
+                            </label>
+
+                            <input
+                                type="text"
+                                id="pickupLocation"
+                                name="pickupLocation"
+                                placeholder="Hotel, airport, or other location"
+                                required
+                            >
+
+                        </div>
+
+
+                        <div class="form-group">
+
+                            <label for="notes">
+                                Additional Notes
+                            </label>
+
+                            <textarea
+                                id="notes"
+                                name="notes"
+                                rows="5"
+                                placeholder="Anything the driver should know?"
+                            ></textarea>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- Submit -->
+                    <div class="form-submit">
+
+                        <button
+                            type="submit"
+                            class="primary-button"
+                        >
+                            Request Appointment
+                        </button>
+
+                    </div>
+
+
+                    <!-- Status Message -->
+                    <div
+                        id="formMessage"
+                        class="form-message"
+                    ></div>
+
+                </form>
+
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <!-- Footer -->
+    <footer>
+
+        <div class="container">
+
+            <p>
+                © 2026 Samuel Tamsi.
+                All rights reserved.
+            </p>
+
+        </div>
+
+    </footer>
+
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/booking.js"></script>
+
+</body>
+
+</html>
