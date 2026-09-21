@@ -1,182 +1,423 @@
-// Supabase Configuration - Replace with your project values
-const SUPABASE_URL = 'https://YOUR_PROJECT_ID.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
+// Supabase Configuration
+const SUPABASE_URL = 'https://uvaoanwfkjzssynqaaeg.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_GFAMtGSkcs4EKtrH8CCbtg_sX-7WGVW';
+const PRIMARY_DEV_ADMIN = 'kentvincentboter444@gmail.com';
 
-// Whitelist of authorized admin emails
-const AUTHORIZED_GMAILS = [
-    'kentvincentboter444@gmail.com',
-    'dondaveigot1@gmail.com'
-];
-
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// DOM Elements - Auth
-const authSection = document.getElementById('authSection');
-const dashboardSection = document.getElementById('dashboardSection');
-const requestOtpForm = document.getElementById('requestOtpForm');
-const verifyOtpForm = document.getElementById('verifyOtpForm');
-const adminEmailInput = document.getElementById('adminEmail');
-const otpTokenInput = document.getElementById('otpToken');
-const btnResetOtp = document.getElementById('btnResetOtp');
-const authMessage = document.getElementById('authMessage');
-const currentAdminEmail = document.getElementById('currentAdminEmail');
-const btnLogout = document.getElementById('btnLogout');
-const btnRefresh = document.getElementById('btnRefresh');
-
-// DOM Elements - Dashboard
-const appointmentsTableBody = document.getElementById('appointmentsTableBody');
-const statusFilter = document.getElementById('statusFilter');
-const serviceFilter = document.getElementById('serviceFilter');
-const statTotal = document.getElementById('statTotal');
-const statPending = document.getElementById('statPending');
-const statConfirmed = document.getElementById('statConfirmed');
-const statCompleted = document.getElementById('statCompleted');
-
+let sbClient = null;
+let pendingLoginEmail = '';
+let pendingLoginName = '';
 let allAppointments = [];
-let pendingEmail = '';
+let allAdmins = [];
+let realtimeRevokeChannel = null;
 
-// Check session on page load
-document.addEventListener('DOMContentLoaded', async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    handleSession(session);
-
-    supabase.auth.onAuthStateChange((_event, session) => {
-        handleSession(session);
-    });
-});
-
-function handleSession(session) {
-    if (session && session.user && AUTHORIZED_GMAILS.includes(session.user.email.toLowerCase())) {
-        authSection.classList.add('hidden');
-        dashboardSection.classList.remove('hidden');
-        currentAdminEmail.textContent = session.user.email;
-        fetchAppointments();
-    } else if (session && session.user && !AUTHORIZED_GMAILS.includes(session.user.email.toLowerCase())) {
-        // Logged in with an email not in the whitelist
-        supabase.auth.signOut();
-        authSection.classList.remove('hidden');
-        dashboardSection.classList.add('hidden');
-        showAuthMessage('Unauthorized email address. Access denied.', 'error');
-    } else {
-        authSection.classList.remove('hidden');
-        dashboardSection.classList.add('hidden');
-    }
-}
-
-// 1. Request OTP Code
-requestOtpForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const email = adminEmailInput.value.trim().toLowerCase();
-
-    // Whitelist check before dispatching OTP
-    if (!AUTHORIZED_GMAILS.includes(email)) {
-        showAuthMessage('This email is not authorized as an administrator.', 'error');
-        return;
-    }
-
-    showAuthMessage('Sending 6-digit OTP code to your inbox...', 'info');
-
-    const { error } = await supabase.auth.signInWithOtp({
-        email: email,
-        options: {
-            shouldCreateUser: false // Only allow existing users or authorized emails
+async function ensureSupabaseClient(retries = 15) {
+    if (sbClient) return sbClient;
+    for (let i = 0; i < retries; i++) {
+        if (window.supabase && typeof window.supabase.createClient === 'function') {
+            sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            return sbClient;
         }
-    });
-
-    if (error) {
-        showAuthMessage(error.message, 'error');
-        return;
+        await new Promise(res => setTimeout(res, 150));
     }
-
-    pendingEmail = email;
-    requestOtpForm.classList.add('hidden');
-    verifyOtpForm.classList.remove('hidden');
-    showAuthMessage(`Verification code sent to ${email}. Check your inbox.`, 'success');
-});
-
-// 2. Verify OTP Code
-verifyOtpForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const token = otpTokenInput.value.trim();
-
-    if (!token || token.length !== 6) {
-        showAuthMessage('Please enter a valid 6-digit OTP code.', 'error');
-        return;
-    }
-
-    showAuthMessage('Verifying token...', 'info');
-
-    const { data, error } = await supabase.auth.verifyOtp({
-        email: pendingEmail,
-        token: token,
-        type: 'email'
-    });
-
-    if (error) {
-        showAuthMessage(error.message, 'error');
-        return;
-    }
-
-    if (data.session) {
-        showAuthMessage('Authenticated successfully!', 'success');
-        verifyOtpForm.reset();
-        requestOtpForm.reset();
-    }
-});
-
-btnResetOtp.addEventListener('click', () => {
-    verifyOtpForm.classList.add('hidden');
-    requestOtpForm.classList.remove('hidden');
-    authMessage.textContent = '';
-});
-
-// 3. Sign Out
-btnLogout.addEventListener('click', async () => {
-    await supabase.auth.signOut();
-    location.reload();
-});
-
-btnRefresh.addEventListener('click', () => {
-    fetchAppointments();
-});
-
-// 4. Fetch Appointments from Supabase
-async function fetchAppointments() {
-    appointmentsTableBody.innerHTML = `<tr><td colspan="7" class="empty-state">Loading appointments...</td></tr>`;
-
-    const { data, error } = await supabase
-        .from('appointments')
-        .select('*')
-        .order('appointment_date', { ascending: true })
-        .order('appointment_time', { ascending: true });
-
-    if (error) {
-        appointmentsTableBody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color: #dc2626;">Error loading data: ${error.message}</td></tr>`;
-        return;
-    }
-
-    allAppointments = data || [];
-    updateMetrics(allAppointments);
-    renderAppointmentsTable();
+    return null;
 }
 
-// 5. Render Table & Filter
-function renderAppointmentsTable() {
-    const statusVal = statusFilter.value;
-    const serviceVal = serviceFilter.value;
+function getAdminRedirectUrl() {
+    return window.location.origin + window.location.pathname;
+}
+
+// ==========================================
+// 1. ACTIVE AUTHORIZATION & KICK-OUT GUARDS
+// ==========================================
+
+// Force kick-out and clear all browser credentials
+async function forceRevocationLogout(reason = 'Your administrator access has been revoked.') {
+    console.warn('Revocation triggered:', reason);
+    const client = await ensureSupabaseClient();
+    if (client) {
+        try {
+            await client.auth.signOut();
+        } catch (e) {
+            console.error('Signout error:', e);
+        }
+    }
+    localStorage.removeItem('active_admin_email');
+    localStorage.removeItem('active_admin_name');
+    alert(reason);
+    location.reload();
+}
+
+// Verify against the database that current admin is still whitelisted
+async function verifyCurrentAdminAuthorization(email) {
+    if (!email) return false;
+    
+    // Dev admin always retains master privileges
+    if (email.toLowerCase() === PRIMARY_DEV_ADMIN.toLowerCase()) return true;
+
+    const client = await ensureSupabaseClient();
+    if (!client) return true;
+
+    try {
+        const { data, error } = await client
+            .from('admins')
+            .select('email')
+            .eq('email', email.toLowerCase())
+            .maybeSingle();
+
+        if (error || !data) {
+            await forceRevocationLogout();
+            return false;
+        }
+        return true;
+    } catch (err) {
+        console.error('Authorization check failed:', err);
+        return true;
+    }
+}
+
+// Listen in real-time for any deletions on the admins table
+async function startRealtimeRevocationListener(email) {
+    if (!email || email.toLowerCase() === PRIMARY_DEV_ADMIN.toLowerCase()) return;
+
+    const client = await ensureSupabaseClient();
+    if (!client) return;
+
+    if (realtimeRevokeChannel) {
+        client.removeChannel(realtimeRevokeChannel);
+    }
+
+    realtimeRevokeChannel = client
+        .channel('public:admins:revocation')
+        .on(
+            'postgres_changes',
+            { event: 'DELETE', schema: 'public', table: 'admins' },
+            async () => {
+                // Whenever any admin record is deleted, re-verify this session
+                await verifyCurrentAdminAuthorization(email);
+            }
+        )
+        .subscribe();
+}
+
+// ==========================================
+// 2. SUPABASE AUTH 6-DIGIT OTP LOGIN FLOW
+// ==========================================
+
+// STEP 1: Verify whitelist authorization, retrieve admin name, then dispatch OTP
+window.requestOtpCode = async function() {
+    const emailInput = document.getElementById('adminEmailInput');
+    const btn = document.getElementById('btnRequestOtp');
+    if (!emailInput) return;
+
+    const email = emailInput.value.trim().toLowerCase();
+    if (!email) {
+        showAuthMsg('Please enter your Gmail address.', 'error');
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Verifying authorization...';
+    }
+    showAuthMsg('Checking admin whitelist...', 'info');
+
+    const client = await ensureSupabaseClient();
+    if (!client) {
+        showAuthMsg('Cannot connect to database. Check internet connection.', 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Send 6-Digit Code';
+        }
+        return;
+    }
+
+    try {
+        let isAuthorized = false;
+        let adminName = 'Samuel Tamsi';
+
+        const { data, error } = await client
+            .from('admins')
+            .select('email, name')
+            .eq('email', email)
+            .single();
+
+        if (data && !error) {
+            isAuthorized = true;
+            if (data.name && data.name.trim() !== '') {
+                adminName = data.name.trim();
+            }
+        } else if (email === PRIMARY_DEV_ADMIN.toLowerCase()) {
+            isAuthorized = true;
+            adminName = 'Kent Vincent';
+        }
+
+        if (!isAuthorized) {
+            showAuthMsg('Access Denied: This Gmail is not authorized as an administrator.', 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Send 6-Digit Code';
+            }
+            return;
+        }
+
+        // Whitelisted: dispatch OTP with explicit redirect directly to admin.html
+        if (btn) btn.textContent = 'Sending code to Gmail...';
+        const { error: otpError } = await client.auth.signInWithOtp({
+            email: email,
+            options: {
+                shouldCreateUser: true,
+                emailRedirectTo: getAdminRedirectUrl()
+            }
+        });
+
+        if (otpError) {
+            console.error('Supabase OTP dispatch error:', otpError);
+            showAuthMsg(`Failed to send code: ${otpError.message}`, 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Send 6-Digit Code';
+            }
+            return;
+        }
+
+        pendingLoginEmail = email;
+        pendingLoginName = adminName;
+        document.getElementById('authSection').classList.add('hidden');
+        document.getElementById('otpSection').classList.remove('hidden');
+        document.getElementById('otpPromptText').textContent = `We sent a code to ${email}. Click the code inside the email or enter it below.`;
+        document.getElementById('otpCodeInput').value = '';
+        document.getElementById('otpCodeInput').focus();
+
+    } catch (err) {
+        console.error('Verification error:', err);
+        showAuthMsg(`Error: ${err.message}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Send 6-Digit Code';
+        }
+    }
+};
+
+// STEP 2: Verify the 6-Digit Code manually typed on the screen
+window.verifyOtpCode = async function() {
+    const otpInput = document.getElementById('otpCodeInput');
+    const btn = document.getElementById('btnVerifyOtp');
+    if (!otpInput) return;
+
+    const token = otpInput.value.trim();
+    if (token.length < 6) {
+        showOtpMsg('Please enter all 6 digits.', 'error');
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Verifying code...';
+    }
+    showOtpMsg('Validating code...', 'info');
+
+    const client = await ensureSupabaseClient();
+    if (!client) {
+        showOtpMsg('Connection failed. Please retry.', 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Verify & Unlock';
+        }
+        return;
+    }
+
+    try {
+        const { data, error } = await client.auth.verifyOtp({
+            email: pendingLoginEmail,
+            token: token,
+            type: 'email'
+        });
+
+        if (error) {
+            console.error('OTP Verification Error:', error);
+            showOtpMsg('Invalid or expired code. Please check your email.', 'error');
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = 'Verify & Unlock';
+            }
+            return;
+        }
+
+        showOtpMsg('Verification successful! Opening dashboard...', 'success');
+        localStorage.setItem('active_admin_email', pendingLoginEmail);
+        localStorage.setItem('active_admin_name', pendingLoginName);
+        setTimeout(() => {
+            showDashboard(pendingLoginEmail, pendingLoginName);
+        }, 300);
+
+    } catch (err) {
+        console.error('Verify error:', err);
+        showOtpMsg(`Verification failed: ${err.message}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Verify & Unlock';
+        }
+    }
+};
+
+window.backToEmailStep = function() {
+    document.getElementById('otpSection').classList.add('hidden');
+    document.getElementById('authSection').classList.remove('hidden');
+};
+
+window.handleLogout = async function() {
+    const client = await ensureSupabaseClient();
+    if (client) {
+        await client.auth.signOut();
+    }
+    localStorage.removeItem('active_admin_email');
+    localStorage.removeItem('active_admin_name');
+    location.reload();
+};
+
+function showAuthMsg(text, type) {
+    const el = document.getElementById('authMessage');
+    if (!el) return;
+    el.textContent = text;
+    el.className = `form-message ${type}`;
+    el.classList.remove('hidden');
+}
+
+function showOtpMsg(text, type) {
+    const el = document.getElementById('otpMessage');
+    if (!el) return;
+    el.textContent = text;
+    el.className = `form-message ${type}`;
+    el.classList.remove('hidden');
+}
+
+function showDashboard(email, name) {
+    document.getElementById('authSection').classList.add('hidden');
+    document.getElementById('otpSection').classList.add('hidden');
+    document.getElementById('dashboardSection').classList.remove('hidden');
+
+    const greetingElement = document.getElementById('adminGreetingName');
+    if (greetingElement) {
+        greetingElement.textContent = name || 'Samuel Tamsi';
+    }
+
+    startLiveClock();
+    startRealtimeRevocationListener(email);
+    fetchAppointments();
+    loadSiteContent();
+    fetchAdmins();
+}
+
+function startLiveClock() {
+    const clockElement = document.getElementById('liveClock');
+    if (!clockElement) return;
+
+    function tick() {
+        const now = new Date();
+        const options = { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric',
+            hour: '2-digit', 
+            minute: '2-digit', 
+            second: '2-digit'
+        };
+        clockElement.textContent = now.toLocaleDateString('en-US', options);
+    }
+
+    tick();
+    if (!window.clockTimer) {
+        window.clockTimer = setInterval(tick, 1000);
+    }
+}
+
+// ==========================================
+// 3. TABS & APPOINTMENTS MANAGEMENT
+// ==========================================
+window.switchTab = async function(tabName) {
+    const activeEmail = localStorage.getItem('active_admin_email');
+    const isAuthorized = await verifyCurrentAdminAuthorization(activeEmail);
+    if (!isAuthorized) return;
+
+    const tabAppts = document.getElementById('tabAppointments');
+    const tabWeb = document.getElementById('tabWebsite');
+    const tabSet = document.getElementById('tabSettings');
+
+    const btnAppts = document.getElementById('btnTabAppointments');
+    const btnWeb = document.getElementById('btnTabWebsite');
+    const btnSet = document.getElementById('btnTabSettings');
+
+    if (!tabAppts || !tabWeb || !tabSet) return;
+
+    [tabAppts, tabWeb, tabSet].forEach(t => t.classList.add('hidden'));
+    [btnAppts, btnWeb, btnSet].forEach(b => b.classList.remove('active'));
+
+    if (tabName === 'appointments') {
+        tabAppts.classList.remove('hidden');
+        btnAppts.classList.add('active');
+    } else if (tabName === 'website') {
+        tabWeb.classList.remove('hidden');
+        btnWeb.classList.add('active');
+        loadSiteContent();
+    } else if (tabName === 'settings') {
+        tabSet.classList.remove('hidden');
+        btnSet.classList.add('active');
+        fetchAdmins();
+    }
+};
+
+window.fetchAppointments = async function() {
+    const activeEmail = localStorage.getItem('active_admin_email');
+    const isAuthorized = await verifyCurrentAdminAuthorization(activeEmail);
+    if (!isAuthorized) return;
+
+    const tbody = document.getElementById('appointmentsTableBody');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="empty-state">Connecting to database...</td></tr>`;
+
+    const client = await ensureSupabaseClient();
+    if (!client) return;
+
+    try {
+        const { data, error } = await client
+            .from('appointments')
+            .select('*')
+            .order('appointment_date', { ascending: true })
+            .order('appointment_time', { ascending: true });
+
+        if (error) throw error;
+
+        allAppointments = data || [];
+        updateMetrics(allAppointments);
+        renderAppointmentsTable();
+    } catch (err) {
+        if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color: #dc2626;">Failed to load data: ${err.message}</td></tr>`;
+    }
+};
+
+window.renderAppointmentsTable = function() {
+    const tbody = document.getElementById('appointmentsTableBody');
+    const statusFilter = document.getElementById('statusFilter');
+    const serviceFilter = document.getElementById('serviceFilter');
+    if (!tbody) return;
+
+    const statusVal = statusFilter ? statusFilter.value : 'all';
+    const serviceVal = serviceFilter ? serviceFilter.value : 'all';
 
     const filtered = allAppointments.filter(item => {
-        const matchesStatus = statusVal === 'all' || item.status.toLowerCase() === statusVal.toLowerCase();
+        const matchesStatus = statusVal === 'all' || (item.status && item.status.toLowerCase() === statusVal.toLowerCase());
         const matchesService = serviceVal === 'all' || item.service === serviceVal;
         return matchesStatus && matchesService;
     });
 
     if (filtered.length === 0) {
-        appointmentsTableBody.innerHTML = `<tr><td colspan="7" class="empty-state">No appointments found.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-state">No appointments found matching criteria.</td></tr>`;
         return;
     }
 
-    appointmentsTableBody.innerHTML = filtered.map(app => `
+    tbody.innerHTML = filtered.map(app => `
         <tr>
             <td>
                 <strong>${formatDate(app.appointment_date)}</strong><br>
@@ -189,61 +430,310 @@ function renderAppointmentsTable() {
                 </a>
             </td>
             <td><strong>${escapeHtml(app.service)}</strong></td>
-            <td>${app.guests} Pax</td>
+            <td>${app.guests || 1} Pax</td>
             <td>
                 <strong>Pickup:</strong> ${escapeHtml(app.pickup_location)}<br>
-                ${app.notes ? `<small style="color: #6b7280;"><strong>Notes:</strong> ${escapeHtml(app.notes)}</small>` : '<small style="color: #9ca3af;">No additional notes</small>'}
+                ${app.notes ? `<small style="color: #6b7280;"><strong>Notes:</strong> ${escapeHtml(app.notes)}</small>` : '<small style="color: #9ca3af;">No notes</small>'}
             </td>
             <td>
-                <span class="badge badge-${app.status.toLowerCase()}">${app.status}</span>
+                <span class="badge badge-${(app.status || 'pending').toLowerCase()}">${app.status || 'pending'}</span>
             </td>
             <td>
                 <select class="action-select" onchange="updateAppointmentStatus(${app.id}, this.value)">
-                    <option value="" disabled selected>Update</option>
-                    <option value="pending" ${app.status === 'pending' ? 'disabled' : ''}>Pending</option>
-                    <option value="confirmed" ${app.status === 'confirmed' ? 'disabled' : ''}>Confirmed</option>
-                    <option value="completed" ${app.status === 'completed' ? 'disabled' : ''}>Completed</option>
-                    <option value="cancelled" ${app.status === 'cancelled' ? 'disabled' : ''}>Cancelled</option>
+                    <option value="" disabled selected>Update Status</option>
+                    <option value="pending" ${app.status === 'pending' ? 'disabled' : ''}>Set Pending</option>
+                    <option value="confirmed" ${app.status === 'confirmed' ? 'disabled' : ''}>Set Confirmed</option>
+                    <option value="completed" ${app.status === 'completed' ? 'disabled' : ''}>Set Completed</option>
+                    <option value="cancelled" ${app.status === 'cancelled' ? 'disabled' : ''}>Set Cancelled</option>
                 </select>
             </td>
         </tr>
     `).join('');
-}
+};
 
-// 6. Update Status
 window.updateAppointmentStatus = async function(id, newStatus) {
     if (!newStatus) return;
+    const client = await ensureSupabaseClient();
+    if (!client) return;
 
-    const { error } = await supabase
-        .from('appointments')
-        .update({ status: newStatus })
-        .eq('id', id);
+    try {
+        const { error } = await client
+            .from('appointments')
+            .update({ status: newStatus })
+            .eq('id', id);
 
-    if (error) {
-        alert(`Failed to update status: ${error.message}`);
-        fetchAppointments();
-        return;
-    }
+        if (error) throw error;
 
-    // Reflect update in local state without full reload
-    const target = allAppointments.find(a => a.id === id);
-    if (target) {
-        target.status = newStatus;
-        updateMetrics(allAppointments);
-        renderAppointmentsTable();
+        const target = allAppointments.find(a => a.id === id);
+        if (target) {
+            target.status = newStatus;
+            updateMetrics(allAppointments);
+            renderAppointmentsTable();
+        }
+    } catch (err) {
+        alert(`Status update failed: ${err.message}`);
     }
 };
 
-// Filter change events
-statusFilter.addEventListener('change', renderAppointmentsTable);
-serviceFilter.addEventListener('change', renderAppointmentsTable);
+// ==========================================
+// 4. SETTINGS: MANAGE ADMIN NAMES & EMAILS
+// ==========================================
+window.fetchAdmins = async function() {
+    const tbody = document.getElementById('adminsTableBody');
+    if (!tbody) return;
 
-// Helper functions
+    const client = await ensureSupabaseClient();
+    if (!client) return;
+
+    try {
+        const { data, error } = await client
+            .from('admins')
+            .select('*')
+            .order('created_at', { ascending: true });
+
+        if (error) throw error;
+
+        allAdmins = data || [];
+        renderAdminsTable();
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="4" class="empty-state" style="color: #dc2626;">Failed to load admins: ${err.message}</td></tr>`;
+    }
+};
+
+function renderAdminsTable() {
+    const tbody = document.getElementById('adminsTableBody');
+    if (!tbody) return;
+
+    const activeUser = localStorage.getItem('active_admin_email') || '';
+
+    if (allAdmins.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" class="empty-state">No administrators found.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = allAdmins.map(admin => {
+        const isSelf = admin.email.toLowerCase() === activeUser.toLowerCase();
+        const displayName = admin.name || 'Samuel Tamsi';
+        return `
+            <tr>
+                <td><strong>${escapeHtml(displayName)}</strong></td>
+                <td>
+                    ${escapeHtml(admin.email)}
+                    ${isSelf ? '<span style="color: #0E7C86; font-size: 0.8rem; margin-left: 6px; font-weight: bold;">(You)</span>' : ''}
+                </td>
+                <td>${formatDate(admin.created_at)}</td>
+                <td style="text-align: right;">
+                    ${isSelf 
+                        ? '<span style="color: #9ca3af; font-size: 0.85rem;">Primary</span>' 
+                        : `<button class="btn-outline" style="color: #dc2626; border-color: #fca5a5; padding: 4px 10px; font-size: 0.8rem;" onclick="removeAdmin(${admin.id}, '${escapeHtml(admin.email)}')">Remove</button>`
+                    }
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+window.addNewAdmin = async function() {
+    const nameInput = document.getElementById('newAdminName');
+    const emailInput = document.getElementById('newAdminEmail');
+    const btn = document.getElementById('btnAddAdmin');
+
+    const name = nameInput ? nameInput.value.trim() : '';
+    const email = emailInput ? emailInput.value.trim().toLowerCase() : '';
+
+    if (!email) {
+        showSettingsMsg('Please enter a valid Gmail address.', true);
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Adding & Sending Invite...';
+    }
+
+    const client = await ensureSupabaseClient();
+    if (!client) {
+        showSettingsMsg('Database connection unavailable.', true);
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Add Admin';
+        }
+        return;
+    }
+
+    try {
+        const { error: insertError } = await client
+            .from('admins')
+            .insert([{ 
+                name: name || 'Samuel Tamsi', 
+                email: email 
+            }]);
+
+        if (insertError) {
+            if (insertError.code === '23505') {
+                throw new Error('This email is already registered as an administrator.');
+            }
+            throw insertError;
+        }
+
+        const { error: inviteError } = await client.auth.signInWithOtp({
+            email: email,
+            options: {
+                shouldCreateUser: true,
+                emailRedirectTo: getAdminRedirectUrl()
+            }
+        });
+
+        if (inviteError) {
+            showSettingsMsg(`Admin registered, but email delivery had an issue: ${inviteError.message}`, true);
+        } else {
+            showSettingsMsg(`Success: ${name || email} added and invitation dispatched!`, false);
+        }
+
+        if (nameInput) nameInput.value = '';
+        if (emailInput) emailInput.value = '';
+        fetchAdmins();
+    } catch (err) {
+        showSettingsMsg(err.message, true);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Add Admin';
+        }
+    }
+};
+
+window.removeAdmin = async function(id, email) {
+    if (!confirm(`Are you sure you want to revoke admin access for ${email}?`)) return;
+
+    const client = await ensureSupabaseClient();
+    if (!client) return;
+
+    try {
+        const { error } = await client
+            .from('admins')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
+
+        showSettingsMsg(`Admin access removed for ${email}.`, false);
+        fetchAdmins();
+    } catch (err) {
+        alert(`Failed to remove admin: ${err.message}`);
+    }
+};
+
+function showSettingsMsg(text, isError) {
+    const el = document.getElementById('settingsMessage');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'form-message ' + (isError ? 'error' : 'success');
+    el.classList.remove('hidden');
+}
+
+// ==========================================
+// 5. CMS CONTENT MANAGEMENT
+// ==========================================
+window.loadSiteContent = async function() {
+    const client = await ensureSupabaseClient();
+    if (!client) return;
+
+    try {
+        const { data, error } = await client
+            .from('site_content')
+            .select('*')
+            .eq('id', 'main')
+            .single();
+
+        if (error && error.code !== 'PGRST116') throw error;
+
+        if (data) {
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el && val !== undefined && val !== null) el.value = val;
+            };
+
+            setVal('cmsHeroTitle', data.hero_title);
+            setVal('cmsHeroDesc', data.hero_desc);
+            setVal('cmsPriceCity', data.price_city);
+            setVal('cmsPriceIsland', data.price_island);
+            setVal('cmsPriceAirport', data.price_airport);
+            setVal('cmsPhone', data.contact_phone);
+            setVal('cmsEmail', data.contact_email);
+        }
+    } catch (err) {
+        console.warn('Could not load site content from Supabase:', err);
+    }
+};
+
+window.saveSiteContent = async function() {
+    const btn = document.getElementById('btnSaveCms');
+    const client = await ensureSupabaseClient();
+
+    if (!client) {
+        showCmsMsg('Database not connected.', true);
+        return;
+    }
+
+    const payload = {
+        id: 'main',
+        hero_title: document.getElementById('cmsHeroTitle').value.trim(),
+        hero_desc: document.getElementById('cmsHeroDesc').value.trim(),
+        price_city: parseInt(document.getElementById('cmsPriceCity').value, 10) || 2000,
+        price_island: parseInt(document.getElementById('cmsPriceIsland').value, 10) || 3500,
+        price_airport: parseInt(document.getElementById('cmsPriceAirport').value, 10) || 800,
+        contact_phone: document.getElementById('cmsPhone').value.trim(),
+        contact_email: document.getElementById('cmsEmail').value.trim(),
+        updated_at: new Date().toISOString()
+    };
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Saving changes...';
+    }
+
+    try {
+        const { error } = await client.from('site_content').upsert(payload);
+        if (error) throw error;
+        showCmsMsg('Changes successfully saved to live website!', false);
+    } catch (err) {
+        showCmsMsg(`Failed to save: ${err.message}`, true);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Apply to Live Website';
+        }
+    }
+};
+
+function showCmsMsg(text, isError) {
+    const el = document.getElementById('cmsMessage');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'form-message ' + (isError ? 'error' : 'success');
+    el.classList.remove('hidden');
+}
+
+// Helpers
+const btnRefresh = document.getElementById('btnRefresh');
+if (btnRefresh) btnRefresh.addEventListener('click', fetchAppointments);
+
+const statusFilter = document.getElementById('statusFilter');
+const serviceFilter = document.getElementById('serviceFilter');
+if (statusFilter) statusFilter.addEventListener('change', renderAppointmentsTable);
+if (serviceFilter) serviceFilter.addEventListener('change', renderAppointmentsTable);
+
 function updateMetrics(list) {
-    statTotal.textContent = list.length;
-    statPending.textContent = list.filter(a => a.status === 'pending').length;
-    statConfirmed.textContent = list.filter(a => a.status === 'confirmed').length;
-    statCompleted.textContent = list.filter(a => a.status === 'completed').length;
+    const statTotal = document.getElementById('statTotal');
+    const statPending = document.getElementById('statPending');
+    const statConfirmed = document.getElementById('statConfirmed');
+    const statCompleted = document.getElementById('statCompleted');
+
+    if (statTotal) statTotal.textContent = list.length;
+    if (statPending) statPending.textContent = list.filter(a => a.status === 'pending').length;
+    if (statConfirmed) statConfirmed.textContent = list.filter(a => a.status === 'confirmed').length;
+    if (statCompleted) statCompleted.textContent = list.filter(a => a.status === 'completed').length;
 }
 
 function formatDate(dateStr) {
@@ -263,15 +753,86 @@ function formatTime(timeStr) {
 
 function escapeHtml(str) {
     if (!str) return '';
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
 }
 
-function showAuthMessage(msg, type) {
-    authMessage.textContent = msg;
-    authMessage.className = `form-message ${type}`;
-}
+// Window Focus & Periodic Guard: re-verify authorization whenever tab gains focus
+window.addEventListener('focus', () => {
+    const current = localStorage.getItem('active_admin_email');
+    if (current) {
+        verifyCurrentAdminAuthorization(current);
+    }
+});
+
+// Periodic background check every 15 seconds
+setInterval(() => {
+    const current = localStorage.getItem('active_admin_email');
+    if (current) {
+        verifyCurrentAdminAuthorization(current);
+    }
+}, 15000);
+
+// ==========================================
+// 6. SESSION & DIRECT CLICK INITIALIZATION
+// ==========================================
+(async function initSession() {
+    startLiveClock();
+    const client = await ensureSupabaseClient();
+
+    // 1. Check if user arrived via direct link click (access_token in URL hash)
+    if (client) {
+        const { data: { session } } = await client.auth.getSession();
+        if (session && session.user && session.user.email) {
+            const email = session.user.email.toLowerCase();
+            
+            if (window.location.hash.includes('access_token')) {
+                window.history.replaceState(null, '', window.location.pathname);
+            }
+
+            // Verify they are authorized in admins table before showing dashboard
+            let adminName = 'Samuel Tamsi';
+            let isWhitelisted = email === PRIMARY_DEV_ADMIN.toLowerCase();
+
+            if (!isWhitelisted) {
+                const { data } = await client
+                    .from('admins')
+                    .select('name')
+                    .eq('email', email)
+                    .maybeSingle();
+
+                if (data) {
+                    isWhitelisted = true;
+                    if (data.name) adminName = data.name;
+                }
+            } else {
+                adminName = 'Kent Vincent';
+            }
+
+            if (!isWhitelisted) {
+                await forceRevocationLogout('Your administrator access has been revoked or is not whitelisted.');
+                return;
+            }
+
+            localStorage.setItem('active_admin_email', email);
+            localStorage.setItem('active_admin_name', adminName);
+            showDashboard(email, adminName);
+            return;
+        }
+    }
+
+    // 2. Check existing saved session in localStorage
+    const storedEmail = localStorage.getItem('active_admin_email');
+    const storedName = localStorage.getItem('active_admin_name');
+    if (storedEmail) {
+        // Validate if they are still whitelisted in Supabase
+        const isStillValid = await verifyCurrentAdminAuthorization(storedEmail);
+        if (isStillValid) {
+            showDashboard(storedEmail, storedName);
+        }
+    }
+})();
