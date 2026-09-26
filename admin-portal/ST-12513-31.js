@@ -8,6 +8,7 @@ let pendingLoginEmail = '';
 let pendingLoginName = '';
 let allAppointments = [];
 let allAdmins = [];
+let allVehicles = [];
 let realtimeRevokeChannel = null;
 
 async function ensureSupabaseClient(retries = 15) {
@@ -29,8 +30,6 @@ function getAdminRedirectUrl() {
 // ==========================================
 // 1. ACTIVE AUTHORIZATION & KICK-OUT GUARDS
 // ==========================================
-
-// Force kick-out and clear all browser credentials
 async function forceRevocationLogout(reason = 'Your administrator access has been revoked.') {
     console.warn('Revocation triggered:', reason);
     const client = await ensureSupabaseClient();
@@ -47,11 +46,8 @@ async function forceRevocationLogout(reason = 'Your administrator access has bee
     location.reload();
 }
 
-// Verify against the database that current admin is still whitelisted
 async function verifyCurrentAdminAuthorization(email) {
     if (!email) return false;
-    
-    // Dev admin always retains master privileges
     if (email.toLowerCase() === PRIMARY_DEV_ADMIN.toLowerCase()) return true;
 
     const client = await ensureSupabaseClient();
@@ -75,7 +71,6 @@ async function verifyCurrentAdminAuthorization(email) {
     }
 }
 
-// Listen in real-time for any deletions on the admins table
 async function startRealtimeRevocationListener(email) {
     if (!email || email.toLowerCase() === PRIMARY_DEV_ADMIN.toLowerCase()) return;
 
@@ -92,7 +87,6 @@ async function startRealtimeRevocationListener(email) {
             'postgres_changes',
             { event: 'DELETE', schema: 'public', table: 'admins' },
             async () => {
-                // Whenever any admin record is deleted, re-verify this session
                 await verifyCurrentAdminAuthorization(email);
             }
         )
@@ -100,10 +94,8 @@ async function startRealtimeRevocationListener(email) {
 }
 
 // ==========================================
-// 2. SUPABASE AUTH 6-DIGIT OTP LOGIN FLOW
+// 2. SUPABASE AUTH 6-DIGIT OTP FLOW
 // ==========================================
-
-// STEP 1: Verify whitelist authorization, retrieve admin name, then dispatch OTP
 window.requestOtpCode = async function() {
     const emailInput = document.getElementById('adminEmailInput');
     const btn = document.getElementById('btnRequestOtp');
@@ -160,7 +152,6 @@ window.requestOtpCode = async function() {
             return;
         }
 
-        // Whitelisted: dispatch OTP with explicit redirect directly to admin.html
         if (btn) btn.textContent = 'Sending code to Gmail...';
         const { error: otpError } = await client.auth.signInWithOtp({
             email: email,
@@ -199,7 +190,6 @@ window.requestOtpCode = async function() {
     }
 };
 
-// STEP 2: Verify the 6-Digit Code manually typed on the screen
 window.verifyOtpCode = async function() {
     const otpInput = document.getElementById('otpCodeInput');
     const btn = document.getElementById('btnVerifyOtp');
@@ -306,6 +296,7 @@ function showDashboard(email, name) {
     startLiveClock();
     startRealtimeRevocationListener(email);
     fetchAppointments();
+    fetchVehicles();
     loadSiteContent();
     fetchAdmins();
 }
@@ -335,7 +326,7 @@ function startLiveClock() {
 }
 
 // ==========================================
-// 3. TABS & APPOINTMENTS MANAGEMENT
+// 3. TABS NAVIGATION
 // ==========================================
 window.switchTab = async function(tabName) {
     const activeEmail = localStorage.getItem('active_admin_email');
@@ -343,21 +334,25 @@ window.switchTab = async function(tabName) {
     if (!isAuthorized) return;
 
     const tabAppts = document.getElementById('tabAppointments');
+    const tabVeh = document.getElementById('tabVehicles');
     const tabWeb = document.getElementById('tabWebsite');
     const tabSet = document.getElementById('tabSettings');
 
     const btnAppts = document.getElementById('btnTabAppointments');
+    const btnVeh = document.getElementById('btnTabVehicles');
     const btnWeb = document.getElementById('btnTabWebsite');
     const btnSet = document.getElementById('btnTabSettings');
 
-    if (!tabAppts || !tabWeb || !tabSet) return;
-
-    [tabAppts, tabWeb, tabSet].forEach(t => t.classList.add('hidden'));
-    [btnAppts, btnWeb, btnSet].forEach(b => b.classList.remove('active'));
+    [tabAppts, tabVeh, tabWeb, tabSet].forEach(t => t.classList.add('hidden'));
+    [btnAppts, btnVeh, btnWeb, btnSet].forEach(b => b.classList.remove('active'));
 
     if (tabName === 'appointments') {
         tabAppts.classList.remove('hidden');
         btnAppts.classList.add('active');
+    } else if (tabName === 'vehicles') {
+        tabVeh.classList.remove('hidden');
+        btnVeh.classList.add('active');
+        fetchVehicles();
     } else if (tabName === 'website') {
         tabWeb.classList.remove('hidden');
         btnWeb.classList.add('active');
@@ -369,6 +364,9 @@ window.switchTab = async function(tabName) {
     }
 };
 
+// ==========================================
+// 4. APPOINTMENTS MANAGEMENT
+// ==========================================
 window.fetchAppointments = async function() {
     const activeEmail = localStorage.getItem('active_admin_email');
     const isAuthorized = await verifyCurrentAdminAuthorization(activeEmail);
@@ -476,7 +474,139 @@ window.updateAppointmentStatus = async function(id, newStatus) {
 };
 
 // ==========================================
-// 4. SETTINGS: MANAGE ADMIN NAMES & EMAILS
+// 5. VEHICLES & FLEET MANAGEMENT
+// ==========================================
+window.fetchVehicles = async function() {
+    const container = document.getElementById('vehicleGridContainer');
+    if (!container) return;
+
+    const client = await ensureSupabaseClient();
+    if (!client) return;
+
+    try {
+        const { data, error } = await client
+            .from('vehicles')
+            .select('*')
+            .order('id', { ascending: true });
+
+        if (error) throw error;
+
+        allVehicles = data || [];
+        renderVehicleCards();
+    } catch (err) {
+        container.innerHTML = `<p style="color: #dc2626; padding: 20px;">Failed to load vehicles: ${err.message}</p>`;
+    }
+};
+
+function renderVehicleCards() {
+    const container = document.getElementById('vehicleGridContainer');
+    if (!container) return;
+
+    if (allVehicles.length === 0) {
+        container.innerHTML = `<p class="empty-state">No vehicles in fleet. Add your first vehicle above.</p>`;
+        return;
+    }
+
+    container.innerHTML = allVehicles.map(veh => `
+        <div class="vehicle-card">
+            <img class="vehicle-img" src="${escapeHtml(veh.image_url) || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&w=600&q=80'}" alt="${escapeHtml(veh.name)}">
+            <div class="vehicle-info">
+                <h4>${escapeHtml(veh.name)}</h4>
+                <div class="vehicle-meta">${escapeHtml(veh.category)} • ${escapeHtml(veh.transmission)} • ${veh.seats} Seats</div>
+                <div class="vehicle-rate">₱${Number(veh.daily_rate).toLocaleString()} <span style="font-size: 0.8rem; font-weight: 500; color: #6b7280;">/ day</span></div>
+                
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
+                    <span class="badge badge-${(veh.status || 'available').toLowerCase()}">${veh.status || 'available'}</span>
+                    <select class="action-select" onchange="updateVehicleStatus(${veh.id}, this.value)">
+                        <option value="available" ${veh.status === 'available' ? 'selected' : ''}>Available</option>
+                        <option value="rented" ${veh.status === 'rented' ? 'selected' : ''}>Rented</option>
+                        <option value="maintenance" ${veh.status === 'maintenance' ? 'selected' : ''}>Maintenance</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+window.addNewVehicle = async function() {
+    const nameInput = document.getElementById('newVehName');
+    const catInput = document.getElementById('newVehCategory');
+    const transInput = document.getElementById('newVehTransmission');
+    const seatsInput = document.getElementById('newVehSeats');
+    const rateInput = document.getElementById('newVehRate');
+    const imgInput = document.getElementById('newVehImage');
+
+    const name = nameInput ? nameInput.value.trim() : '';
+    const category = catInput ? catInput.value : 'Sedan';
+    const transmission = transInput ? transInput.value : 'Automatic';
+    const seats = seatsInput ? parseInt(seatsInput.value, 10) : 5;
+    const daily_rate = rateInput ? parseFloat(rateInput.value) : 2000;
+    const image_url = imgInput ? imgInput.value.trim() : '';
+
+    if (!name) {
+        showVehMsg('Please enter a vehicle model name.', true);
+        return;
+    }
+
+    const client = await ensureSupabaseClient();
+    if (!client) return;
+
+    try {
+        const { error } = await client
+            .from('vehicles')
+            .insert([{
+                name,
+                category,
+                transmission,
+                seats,
+                daily_rate,
+                image_url: image_url || null,
+                status: 'available'
+            }]);
+
+        if (error) throw error;
+
+        showVehMsg(`Vehicle "${name}" successfully added to fleet!`, false);
+        if (nameInput) nameInput.value = '';
+        if (imgInput) imgInput.value = '';
+        fetchVehicles();
+    } catch (err) {
+        showVehMsg(`Failed to add vehicle: ${err.message}`, true);
+    }
+};
+
+window.updateVehicleStatus = async function(id, newStatus) {
+    const client = await ensureSupabaseClient();
+    if (!client) return;
+
+    try {
+        const { error } = await client
+            .from('vehicles')
+            .update({ status: newStatus })
+            .eq('id', id);
+
+        if (error) throw error;
+
+        const target = allVehicles.find(v => v.id === id);
+        if (target) {
+            target.status = newStatus;
+            renderVehicleCards();
+        }
+    } catch (err) {
+        alert(`Failed to update vehicle status: ${err.message}`);
+    }
+};
+
+function showVehMsg(text, isError) {
+    const el = document.getElementById('vehMessage');
+    if (!el) return;
+    el.textContent = text;
+    el.className = 'form-message ' + (isError ? 'error' : 'success');
+    el.classList.remove('hidden');
+}
+
+// ==========================================
+// 6. SETTINGS & CMS MANAGEMENT
 // ==========================================
 window.fetchAdmins = async function() {
     const tbody = document.getElementById('adminsTableBody');
@@ -632,9 +762,6 @@ function showSettingsMsg(text, isError) {
     el.classList.remove('hidden');
 }
 
-// ==========================================
-// 5. CMS CONTENT MANAGEMENT
-// ==========================================
 window.loadSiteContent = async function() {
     const client = await ensureSupabaseClient();
     if (!client) return;
@@ -761,7 +888,6 @@ function escapeHtml(str) {
         .replace(/'/g, '&#039;');
 }
 
-// Window Focus & Periodic Guard: re-verify authorization whenever tab gains focus
 window.addEventListener('focus', () => {
     const current = localStorage.getItem('active_admin_email');
     if (current) {
@@ -769,7 +895,6 @@ window.addEventListener('focus', () => {
     }
 });
 
-// Periodic background check every 15 seconds
 setInterval(() => {
     const current = localStorage.getItem('active_admin_email');
     if (current) {
@@ -778,13 +903,12 @@ setInterval(() => {
 }, 15000);
 
 // ==========================================
-// 6. SESSION & DIRECT CLICK INITIALIZATION
+// 7. SESSION INITIALIZATION
 // ==========================================
 (async function initSession() {
     startLiveClock();
     const client = await ensureSupabaseClient();
 
-    // 1. Check if user arrived via direct link click (access_token in URL hash)
     if (client) {
         const { data: { session } } = await client.auth.getSession();
         if (session && session.user && session.user.email) {
@@ -794,7 +918,6 @@ setInterval(() => {
                 window.history.replaceState(null, '', window.location.pathname);
             }
 
-            // Verify they are authorized in admins table before showing dashboard
             let adminName = 'Samuel Tamsi';
             let isWhitelisted = email === PRIMARY_DEV_ADMIN.toLowerCase();
 
@@ -825,11 +948,9 @@ setInterval(() => {
         }
     }
 
-    // 2. Check existing saved session in localStorage
     const storedEmail = localStorage.getItem('active_admin_email');
     const storedName = localStorage.getItem('active_admin_name');
     if (storedEmail) {
-        // Validate if they are still whitelisted in Supabase
         const isStillValid = await verifyCurrentAdminAuthorization(storedEmail);
         if (isStillValid) {
             showDashboard(storedEmail, storedName);
